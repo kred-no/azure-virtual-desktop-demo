@@ -9,8 +9,30 @@ variable "config" {
 
 }
 
-variable "aad_desktop_users" {
+variable "aad_users" {
   type    = set(string)
   default = []
+}
+
+variable "aad_admins" {
+  type    = set(string)
+  default = []
+}
+
+variable "demo_users" {
+  type    = set(string)
+  
+  default = [
+    "avd1",
+    "avd2",
+  ]
+}
+
+variable "demo_admins" {
+  type    = set(string)
+  
+  default = [
+    "avdadm",
+  ]
 }
 

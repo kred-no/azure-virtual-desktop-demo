@@ -8,21 +8,13 @@ data "azuread_domains" "CURRENT" {
   only_initial = true
 }
 
-data "azurerm_role_definition" "DESKTOP_USER" { 
-  name = "Desktop Virtualization User"
-}
-
-data "azurerm_role_definition" "VM_USER" {
-  name = "Virtual Machine User Login"
-}
-
 //////////////////////////////////
-// Azure AD | Role Assignments
+// AzureAD | Create Group(s)
 //////////////////////////////////
 
 // Create a new AAD Group for AVD Users
-resource "azuread_group" "DESKTOP_USER" {
-  display_name       = "AvdUsers"
+resource "azuread_group" "USERS" {
+  display_name       = "AVD Users"
   security_enabled   = true
   owners             = [data.azuread_client_config.CURRENT.object_id]
   
@@ -32,48 +24,101 @@ resource "azuread_group" "DESKTOP_USER" {
   }
 }
 
-resource "azurerm_role_assignment" "DESKTOP_USER" {
-  scope              = var.config.resource_group.id
-  role_definition_id = data.azurerm_role_definition.DESKTOP_USER.id
-  principal_id       = azuread_group.DESKTOP_USER.id
-}
-
-resource "azurerm_role_assignment" "VM_LOGIN" {
-  scope              = var.config.resource_group.id
-  role_definition_id = data.azurerm_role_definition.VM_USER.id
-  principal_id       = azuread_group.DESKTOP_USER.id
+resource "azuread_group" "ADMINS" {
+  display_name       = "AVD Admins"
+  security_enabled   = true
+  owners             = [data.azuread_client_config.CURRENT.object_id]
+  
+  // BUG: https://github.com/hashicorp/terraform-provider-azuread/issues/624#issuecomment-942280276  
+  lifecycle {
+    ignore_changes = [owners]
+  }
 }
 
 //////////////////////////////////
-// Azure AD | Add Users
+// AzureAD | Role Assignments
+//////////////////////////////////
+// See https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles
+
+resource "azurerm_role_assignment" "VIRTUAL_DESKTOP_USER" {
+  scope                = var.config.resource_group.id
+  role_definition_name = "Desktop Virtualization User" // Builtin
+  principal_id         = azuread_group.USERS.id
+}
+
+resource "azurerm_role_assignment" "VIRTUAL_DESKTOP_ADMIN" {
+  scope                = var.config.resource_group.id
+  role_definition_name = "Desktop Virtualization User" // Builtin
+  principal_id         = azuread_group.ADMINS.id
+}
+
+resource "azurerm_role_assignment" "VM_LOGIN_USER" {
+  scope                = var.config.resource_group.id
+  role_definition_name = "Virtual Machine User Login" // Builtin
+  principal_id         = azuread_group.USERS.id
+}
+
+resource "azurerm_role_assignment" "VM_LOGIN_ADMIN" {
+  scope                = var.config.resource_group.id
+  role_definition_name = "Virtual Machine Administrator Login" // Builtin
+  principal_id         = azuread_group.ADMINS.id
+}
+
+//////////////////////////////////
+// AzureAD | AAD User(s)
 //////////////////////////////////
 
-data "azuread_user" "DESKTOP_USER" {
-  for_each = var.aad_desktop_users
-
+data "azuread_user" "AAD_USER" {
+  for_each            = var.aad_users
   user_principal_name = format("%s", each.key) // Why?
 }
 
-resource "azuread_group_member" "MAIN" {
-  for_each = data.azuread_user.DESKTOP_USER
+data "azuread_user" "AAD_ADMIN" {
+  for_each            = var.aad_admins
+  user_principal_name = format("%s", each.key) // Why?
+}
 
-  group_object_id  = azuread_group.DESKTOP_USER.id
+resource "azuread_group_member" "AAD_USER" {
+  for_each         = data.azuread_user.AAD_USER
+  group_object_id  = azuread_group.USERS.id
+  member_object_id = each.value["id"]
+}
+
+resource "azuread_group_member" "AAD_ADMIN" {
+  for_each         = data.azuread_user.AAD_ADMIN
+  group_object_id  = azuread_group.ADMINS.id
   member_object_id = each.value["id"]
 }
 
 //////////////////////////////////
-// Azure AD | Demo User(s)
+// AzureAD | Demo User(s)
 //////////////////////////////////
 
-// Create new demo-user
+// Create new demo-user(s)
 resource "azuread_user" "DEMO_USER" {
-  user_principal_name = join("@", ["avd.demo", data.azuread_domains.CURRENT.domains.0.domain_name])
-  display_name        = "AVD Demo User"
-  mail_nickname       = "avdd"
-  password            = "S3cretP@ssword"
+  for_each                = var.demo_users
+  user_principal_name     = join("@", [each.key, data.azuread_domains.CURRENT.domains.0.domain_name])
+  display_name            = format("%s", each.key)
+  disable_strong_password = true
+  password                = "P@ssw0rd"
+}
+
+resource "azuread_user" "DEMO_ADMIN" {
+  for_each                = var.demo_admins
+  user_principal_name     = join("@", [each.key, data.azuread_domains.CURRENT.domains.0.domain_name])
+  display_name            = format("%s", each.key)
+  disable_strong_password = true
+  password                = "SecretP@ssw0rd"
 }
 
 resource "azuread_group_member" "DEMO_USER" {
-  group_object_id  = azuread_group.DESKTOP_USER.id
-  member_object_id = azuread_user.DEMO_USER.id
+  for_each         = azuread_user.DEMO_USER
+  group_object_id  = azuread_group.USERS.id
+  member_object_id = each.value["id"]
+}
+
+resource "azuread_group_member" "DEMO_ADMIN" {
+  for_each         = azuread_user.DEMO_ADMIN
+  group_object_id  = azuread_group.ADMINS.id
+  member_object_id = each.value["id"]
 }
